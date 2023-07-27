@@ -1,134 +1,4 @@
-library(tidyverse)
-library(ggplot2)
-library(readr)
-library(knitr)
-library(kableExtra)
-library(shiny)
-library(gridExtra)
-library(rsconnect)
-file_path <- "C:/Users/hdawg/OneDrive/Documents/Personal/FantasyFootball2023"
-opts_chunk$set(echo = TRUE)
-
-#start of creation of dataframes
-fantasy_performance <- read_csv(paste(file_path,"/fantasy_performance.csv", sep = "")) %>% 
-  select(c(-'2022', -bye, -injury, -'ffl-team', -'avg-3wk'))
-
-rushing <- read_csv(paste(file_path,"/rushing.csv", sep = ""))
-recievingAdvanced <- read_csv(paste(file_path,"/recievingAdvanced.csv", sep = ""))
-recieving <- read_csv(paste(file_path,"/recieving.csv", sep = "")) %>% 
-  mutate('drop%' = recievingAdvanced$'Drop%', YACpR = recievingAdvanced$`YAC/R`)
-
-adp <- read_csv(paste(file_path,"/adp.csv", sep = "")) %>% 
-  filter(Pos %in% c("WR", "RB", "TE")) %>% 
-  select(c(2, 5:8))
-
-convert_to_numeric <- function(x) {
-  as.numeric(str_replace_all(as.character(x), "[^0-9.-]", ""))
-}
-
-adp[, 2:5] <- lapply(adp[, 2:5], convert_to_numeric)
-
-# Calculate the mean for each row of the numeric columns using rowMeans with na.rm = TRUE
-adp$adp <- rowMeans(adp[, 2:5], na.rm = TRUE)
-adp <- adp[!is.nan(adp$adp),]
-
-recieving$Pos <- toupper(recieving$Pos)
-rushing$Pos <- toupper(rushing$Pos)
-
-stats <- full_join(rushing, recieving, by = c("Player", "Pos", "Tm")) %>% 
-  filter(!is.na(Pos)) %>% 
-  filter(Pos %in% c("WR", "RB", "TE")) %>% 
-  select(-c(Rk.x, Rk.y)) %>% 
-  full_join(adp, by = c("Player" = "Name"))
-
-final <- data.frame(full_join(stats, fantasy_performance, 
-                   by = c("Player" = "name")) %>% 
-  select(-c('nfl-team', pos, Tm)) %>% 
-  filter(Pos %in% c("WR", "RB", "TE")) %>% 
-  mutate(StD = 0, Att = ifelse(is.na(Att), 0, Att), FPpTch = pts/(Att+Rec)))
-
-for(i in 1:nrow(final)){
-  if(!is.na(final$wk12[i])){
-    final$StD[i] <- sd(final[i,24:41])
-  }
-}
-
-final$`Ctch.` <- round(as.double(gsub("%$", "", final$`Ctch.`)), 1)
-
-kickers <- read_csv(paste(file_path,"/kickers.csv", sep = "")) %>% 
-  inner_join(fantasy_performance, by = c("Tm" = "nfl-team")) %>% 
-  filter(pos == "K") %>% 
-  select(-c(Lng, name, pos)) %>% 
-  mutate(Std = 0) %>% 
-  rename(FGPer = 'FG%')
-
-for(i in 1:nrow(kickers)){
-  if(!is.na(kickers$wk12[i])){
-    kickers$Std[i] <- sd(kickers[i,19:36])
-  }
-}
-kickers <- kickers[1:23,]
-kickers$FGPer <- round(as.double((gsub("%$", "", kickers$FGPer))), 1)
-kickers$`XP%` <- round(as.double((gsub("%$", "", kickers$`XP%`))), 1)
-
-nflteams <- read_csv(paste(file_path,"/nfl_teams.csv", sep = ""))
-
-defense <- read_csv(paste(file_path,"/defense.csv", sep = ""))
-for(i in 1:nrow(defense)){
-  defense$Tm[i] <- as.character((nflteams %>% filter(Name == defense$Tm[i]))[1,3])
-}
-defense <- defense %>% 
-  inner_join(fantasy_performance, by = c("Tm" = "nfl-team")) %>% 
-  filter(pos == "D/ST") %>% 
-  select(-c(name, pos, Rk, "...18")) %>% 
-  mutate(Std = 0) %>% 
-  rename(PTD = 'TD...10', RTD = "TD...14", TOPer = 'TO%')
-
-for(i in 1:nrow(defense)){
-  if(!is.na(defense$wk12[i])){
-    defense$Std[i] <- sd(defense[i,19:36])
-  }
-}
-#end of creation of dataframes
-#final - skill players df
-#defense, kickers - dfs
-#nflteams- df with nfl teams abbreviations
-#selected - selected teams or players
-
-#start of shinyApp
-
-ui <- fluidPage(
-  tags$style(
-    HTML("
-      body {
-        background-color: rgba(180, 180, 255, 0.2);
-      }
-      h1 {
-        color: rgba(55, 55, 55, 0.9);
-      }
-      /* Add more CSS rules as needed */
-    ")
-  ),
-  titlePanel("Fantasy Football Draft 2023"),
-  fluidRow(
-    column(
-      width = 6,
-      sidebarPanel(
-        selectInput("input_variable", label = "Select an option:", choices = c("Skill Position", "D/ST or Kicker")),
-        uiOutput("dynamic_choices")
-      )
-    ),
-    column(
-      width = 12,
-      mainPanel(
-        plotOutput("plot"),
-        textOutput("output_text"),
-        tableOutput("table")
-      )
-    )
-  )
-)
-
+source("FantasyFootball2023.R")
 server <- function(input, output) {
   # Define a reactive expression to determine the dynamic choices
   dynamic_choices <- reactive({
@@ -199,7 +69,7 @@ server <- function(input, output) {
       return(c(filtered_data, filtered_data2))
     }
   })
-
+  
   output$table <- renderUI({
     if (!is.null(input$input_choice)) {
       if (input$input_variable == "Skill Position") {
@@ -240,13 +110,3 @@ server <- function(input, output) {
     paste("Selected Type:", input$input_variable)
   })
 }
-
-rsconnect::setAccountInfo(
-  name = 'hunterschuller',
-  token = '19CA42E9C76792B97BB1662692841CC1',
-  secret = '6yjmn0tH8pLdpp1mal5JLHY7a6QkXJIiG7KKhlYv'
-)
-
-# Provide the full path to your Shiny app file (app.R or ui.R/server.R)
-deployApp(file_path)
-runApp(file_path)
